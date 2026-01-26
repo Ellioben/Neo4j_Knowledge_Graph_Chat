@@ -59,9 +59,10 @@ class Neo4jDB:
     def get_node_relationships(self, node_id):
         '''获取节点的所有关系'''
         try:
+            # 首先尝试通过自定义ID查找节点，然后通过Neo4j内部ID查找
             query = """
             MATCH (a)-[r]->(b)
-            WHERE id(a) = $node_id OR id(b) = $node_id
+            WHERE (a.id = $node_id OR b.id = $node_id OR id(a) = $node_id OR id(b) = $node_id)
             RETURN a, r, b, 
                    id(a) as start_id, id(b) as end_id,
                    type(r) as rel_type, properties(r) as rel_properties,
@@ -100,13 +101,21 @@ class Neo4jDB:
     def search_nodes(self, keyword):
         '''搜索节点'''
         try:
-            # 在节点的所有属性中搜索关键词
+            # 在节点的所有属性中搜索关键词，并按相关度排序
             query = """
             MATCH (n)
             WHERE any(prop in keys(n) 
                    WHERE toString(n[prop]) CONTAINS $keyword)
-            RETURN id(n) as id, labels(n) as labels, properties(n) as properties
-            ORDER BY id(n)
+            RETURN id(n) as id, labels(n) as labels, properties(n) as properties,
+                   // 计算相关度分数
+                   CASE 
+                       WHEN n.name = $keyword OR n.label = $keyword THEN 100
+                       WHEN toString(n.name) STARTS WITH $keyword OR toString(n.label) STARTS WITH $keyword THEN 90
+                       WHEN toString(n.name) CONTAINS $keyword OR toString(n.label) CONTAINS $keyword THEN 80
+                       WHEN toString(n.description) CONTAINS $keyword THEN 60
+                       ELSE 40
+                   END as relevance_score
+            ORDER BY relevance_score DESC, id(n)
             """
             
             result = self.graph.run(query, keyword=keyword)
@@ -116,7 +125,8 @@ class Neo4jDB:
                 node = {
                     'id': record['id'],
                     'labels': record['labels'],
-                    'properties': dict(record['properties'])
+                    'properties': dict(record['properties']),
+                    'relevance_score': record['relevance_score']
                 }
                 nodes.append(node)
             
@@ -128,8 +138,8 @@ class Neo4jDB:
     def delete_node(self, node_id):
         '''删除节点'''
         try:
-            # 删除真实数据库中的节点
-            self.graph.run("MATCH (n) WHERE id(n) = $node_id DETACH DELETE n", node_id=node_id)
+            # 支持通过自定义ID或Neo4j内部ID删除节点
+            self.graph.run("MATCH (n) WHERE n.id = $node_id OR id(n) = $node_id DETACH DELETE n", node_id=node_id)
             return True
         except Exception as e:
             print(f"删除节点失败: {e}")
@@ -147,7 +157,7 @@ class Neo4jDB:
                 return False
             
             query = f"""
-            MATCH (n) WHERE id(n) = $node_id
+            MATCH (n) WHERE n.id = $node_id OR id(n) = $node_id
             SET {', '.join(set_clauses)}
             RETURN n
             """

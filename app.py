@@ -175,7 +175,9 @@ def get_graph_data():
         
         node_ids = {}
         for i, node in enumerate(nodes):
-            node_id = str(node['id'])  # 确保 ID 是字符串
+            # 优先使用自定义ID，如果没有则使用Neo4j内部ID
+            custom_id = node.get('properties', {}).get('id')
+            node_id = str(custom_id) if custom_id else str(node['id'])
             node_ids[node['id']] = i
             
             # 获取节点标签
@@ -191,6 +193,16 @@ def get_graph_data():
         
         print(f"转换后的节点数据: {len(graph_data['nodes'])} 个节点")
         
+        # 创建Neo4j内部ID到自定义ID的映射
+        internal_to_custom_id = {}
+        for node in nodes:
+            internal_id = node['id']
+            custom_id = node.get('properties', {}).get('id')
+            if custom_id:
+                internal_to_custom_id[internal_id] = str(custom_id)
+            else:
+                internal_to_custom_id[internal_id] = str(internal_id)
+        
         # 获取关系数据
         processed_edges = set()  # 用于去重
         print("正在获取节点关系...")
@@ -202,15 +214,20 @@ def get_graph_data():
                 
                 for rel in relationships:
                     try:
-                        start_id = rel['start_node']['id']
-                        end_id = rel['end_node']['id']
+                        start_internal_id = rel['start_node']['id']
+                        end_internal_id = rel['end_node']['id']
                         rel_type = rel['relationship']['type']
-                        edge_key = f"{start_id}-{rel_type}-{end_id}"
                         
-                        if start_id in node_ids and end_id in node_ids and edge_key not in processed_edges:
+                        # 转换为自定义ID
+                        start_custom_id = internal_to_custom_id.get(start_internal_id, str(start_internal_id))
+                        end_custom_id = internal_to_custom_id.get(end_internal_id, str(end_internal_id))
+                        
+                        edge_key = f"{start_custom_id}-{rel_type}-{end_custom_id}"
+                        
+                        if edge_key not in processed_edges:
                             graph_data['edges'].append({
-                                'from': str(start_id),
-                                'to': str(end_id),
+                                'from': start_custom_id,
+                                'to': end_custom_id,
                                 'label': rel_type,
                                 'title': str(rel['relationship']['properties']) or rel_type
                             })
