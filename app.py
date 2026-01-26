@@ -269,7 +269,10 @@ def knowledge_qa():
         return json_response({'success': False, 'message': '问题不能为空'})
     
     try:
-        # 1. Generate Cypher query
+        # 1. 首先尝试从问题中提取关键词，查找相关节点
+        node_info = get_node_context_from_question(question)
+        
+        # 2. Generate Cypher query
         print(f"正在为问题生成Cypher查询: {question}")
         cypher_query = deepseek_qa.generate_cypher(question)
         if not cypher_query:
@@ -280,19 +283,20 @@ def knowledge_qa():
         
         print(f"生成的Cypher查询: {cypher_query}")
         
-        # 2. Execute the query
+        # 3. Execute the query
         result = db.graph.run(cypher_query).data()
         print(f"查询结果: {result}")
         
-        # 3. Generate natural language answer
-        answer = deepseek_qa.generate_answer(question, result)
+        # 4. Generate natural language answer with context
+        answer = deepseek_qa.generate_answer_with_context(question, result, node_info)
         print(f"生成的回答: {answer}")
         
         return json_response({
             'success': True,
             'answer': answer,
             'query': cypher_query,
-            'data': result
+            'data': result,
+            'context': node_info
         })
         
     except Exception as e:
@@ -304,6 +308,36 @@ def knowledge_qa():
             'success': False,
             'message': '处理您的问题时出错了，请稍后再试。'
         })
+
+def get_node_context_from_question(question):
+    """从问题中提取关键词并获取相关节点的上下文信息"""
+    try:
+        # 获取所有节点，查找与问题关键词匹配的节点
+        all_nodes = db.get_all_nodes()
+        matched_nodes = []
+        
+        # 简单的关键词匹配
+        question_lower = question.lower()
+        for node in all_nodes:
+            node_name = str(node.get('properties', {}).get('name', '')).lower()
+            if node_name in question_lower or any(word in question_lower for word in node_name.split()):
+                matched_nodes.append(node)
+        
+        # 如果找到匹配的节点，获取它们的详细信息和关系
+        context_info = []
+        for node in matched_nodes[:3]:  # 限制为前3个最相关的节点
+            node_id = node['id']
+            node_details = {
+                'node': node,
+                'relationships': db.get_node_relationships(node_id)
+            }
+            context_info.append(node_details)
+        
+        return context_info
+        
+    except Exception as e:
+        print(f"获取节点上下文时出错: {e}")
+        return []
 
 if __name__ == '__main__':
     import argparse
