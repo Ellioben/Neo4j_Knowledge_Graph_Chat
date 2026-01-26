@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>基于Neo4j知识图谱的构建及可视化</title>
+    
+    <!-- CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.bootcdn.net/ajax/libs/daisyui/4.12.10/full.min.css" rel="stylesheet">
+    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- JavaScript -->
+    <link href="https://cdn.jsdelivr.net/npm/vis-network@9.1.2/styles/vis-network.min.css" rel="stylesheet" type="text/css" />
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/vis-network@9.1.2/standalone/umd/vis-network.min.js"></script>
+    <script>
+        // Check if vis is loaded
+        function checkVisLoaded() {
+            if (typeof vis === 'undefined') {
+                console.error('vis.js 未正确加载，请检查网络连接或CDN状态');
+                return false;
+            }
+            console.log('vis.js 已成功加载');
+            return true;
+        }
+        
+        // Make sure vis is available globally
+        window.vis = window.vis || vis;
+    </script>
+    
+    <style>
+        /* 避免节点详情区域的布局闪烁 */
+        #nodeDetails {
+            min-height: 200px;
+            position: relative;
+            transition: none;
+        }
+        
+        /* 加载状态样式优化 */
+        .loading-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.8);
+            z-index: 10;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        #graph-container {
+            height: 600px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            background: #fafafa;
+        }
+        .node-info {
+            background: #f8fafc;
+            border-left: 4px solid #3b82f6;
+        }
+        .search-result {
+            transition: all 0.3s ease;
+        }
+        .search-result:hover {
+            background: #f1f5f9;
+            transform: translateX(4px);
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Header -->
+    <header class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center py-4">
+                <div class="flex items-center">
+                    <i class="fas fa-project-diagram text-blue-600 text-2xl mr-3"></i>
+                    <h1 class="text-2xl font-bold text-gray-900">知识图谱可视化系统</h1>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <button onclick="refreshGraph()" class="btn btn-ghost btn-sm">
+                        <i class="fas fa-sync-alt mr-2"></i>刷新图谱
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Graph Visualization -->
+        <div class="bg-white rounded-lg shadow-sm p-6 mb-8">
+            <div class="mb-4">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="text-xl font-semibold text-gray-800">
+                        <i class="fas fa-sitemap mr-2 text-blue-600"></i>知识图谱可视化
+                    </h2>
+                    <button onclick="fitGraph()" class="btn btn-ghost btn-sm">
+                        <i class="fas fa-expand-arrows-alt mr-2"></i>适应展示
+                    </button>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-blue-50 rounded-lg p-3 text-center">
+                        <div class="text-2xl font-bold text-blue-600" id="nodeCount">0</div>
+                        <div class="text-sm text-gray-600">节点数量</div>
+                    </div>
+                    <div class="bg-green-50 rounded-lg p-3 text-center">
+                        <div class="text-2xl font-bold text-green-600" id="edgeCount">0</div>
+                        <div class="text-sm text-gray-600">关系数量</div>
+                    </div>
+                </div>
+            </div>
+            <div id="graph-container"></div>
+        </div>
+
+        <!-- Search and Node Details Panel -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            <!-- Search -->
+            <div class="bg-white rounded-lg shadow-sm p-6">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">
+                    <i class="fas fa-search mr-2 text-blue-600"></i>搜索节点
+                </h3>
+                <div class="flex gap-4">
+                    <div class="flex-1">
+                        <div class="relative">
+                            <input type="text" id="searchInput" placeholder="输入关键词搜索..." 
+                                   class="input input-bordered w-full pr-12" onkeypress="handleSearchKeypress(event)">
+                            <button onclick="searchNodes()" 
+                                    class="absolute right-2 bottom-2 btn btn-primary btn-sm">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </div>
+                    </div>
+            
+                </div>
+                
+                <!-- QA -->
+                <div class="mt-6">
+                    <h4 class="text-md font-semibold text-gray-700 mb-3">
+                        <i class="fas fa-robot mr-2 text-purple-600"></i>知识问答
+                    </h4>
+                    <div class="flex gap-4">
+                        <div class="flex-1">
+                            <div class="relative">
+                                <input type="text" id="qaInput" placeholder="输入问题..." 
+                                       class="input input-bordered w-full pr-12" onkeypress="handleQAKeypress(event)">
+                                <button onclick="askQuestion()" 
+                                        class="absolute right-2 bottom-2 btn btn-secondary btn-sm">
+                                    <i class="fas fa-question"></i>
+                                </button>
+                            </div>
+                        </div>
+                        
+                    </div>
+                </div>
+            </div>
+
+            <!-- Node Details -->
+            <div class="bg-white rounded-lg shadow-sm p-6">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">
+                    <i class="fas fa-info-circle mr-2 text-blue-600"></i>节点详情
+                </h3>
+                <div id="nodeDetails" class="border rounded-lg p-3 bg-blue-50 min-h-[200px]">
+                    <div class="text-gray-500 text-center py-4">
+                        <i class="fas fa-hand-pointer text-2xl mb-2"></i>
+                        <p class="text-sm">点击图谱中的节点查看详情</p>
+                    </div>
+                </div>
+                
+                <!-- 节点编辑表单 -->
+                <div id="nodeEditForm" class="hidden mt-4">
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                        <h4 class="font-semibold text-blue-800 mb-3">
+                            <i class="fas fa-edit mr-2"></i>编辑节点信息
+                        </h4>
+                        <form id="editNodeForm" class="space-y-3">
+                            <input type="hidden" id="editNodeId">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">名称</label>
+                                    <input type="text" id="editNodeName" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">类型</label>
+                                    <input type="text" id="editNodeType" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">描述</label>
+                                    <textarea id="editNodeDescription" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">章节</label>
+                                    <input type="text" id="editNodeChapter" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">难度</label>
+                                    <select id="editNodeDifficulty" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                        <option value="基础">基础</option>
+                                        <option value="中等">中等</option>
+                                        <option value="困难">困难</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">核心概念</label>
+                                    <input type="text" id="editNodeKeyConcepts" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                </div>
+                            </div>
+                            <div class="flex space-x-3">
+                                <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
+                                    <i class="fas fa-save mr-2"></i>保存
+                                </button>
+                                <button type="button" onclick="cancelEdit()" class="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors">
+                                    <i class="fas fa-times mr-2"></i>取消
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let network = null;
+        let nodes = null;
+        let edges = null;
+        let nodePositions = {}; // 存储节点位置
+
+        // 初始化图谱
+        function initGraph() {
+            const container = document.getElementById('graph-container');
+            
+            // 配置选项
+            const options = {
+                nodes: {
+                    shape: 'dot',
+                    size: 20,
+                    font: {
+                        size: 14,
+                        color: '#333'
+                    },
+                    borderWidth: 2,
+                    shadow: true
+                },
+                edges: {
+                    width: 2,
+                    shadow: true,
+                    font: {
+                        size: 12,
+                        color: '#666'
+                    }
+                },
+                physics: {
+                    enabled: true,
+                    stabilization: {
+                        enabled: true,
+                        iterations: 200,
+                        updateInterval: 25
+                    },
+                    barnesHut: {
+                        gravitationalConstant: -8000,
+                        centralGravity: 0.3,
+                        springLength: 95,
+                        springConstant: 0.04,
+                        damping: 0.09
+                    }
+                },
+                interaction: {
+                    tooltipDelay: 200,
+                    hideEdgesOnDrag: false,  // 拖拽时显示边
+                    navigationButtons: false,  // 隐藏导航按钮
+                    keyboard: false,          // 禁用键盘快捷键
+                    dragNodes: true,         // 确保可以拖拽节点
+                    dragView: true,          // 确保可以拖拽视图
+                    zoomView: true           // 确保可以缩放
+                }
+            };
+
+            // 创建网络并保存到全局变量
+            window.network = new vis.Network(container, {nodes: nodes, edges: edges}, options);
+            
+            // 保存节点位置
+            window.network.on('dragEnd', function(params) {
+                if (params.nodes.length > 0) {
+                    const nodeId = params.nodes[0];
+                    const position = window.network.getPosition(nodeId);
+                    nodePositions[nodeId] = position;
+                    console.log('保存节点位置:', nodeId, position);
+                }
+            });
+            
+            // 稳定化完成后保存所有节点位置
+            window.network.on('stabilizationIterationsDone', function() {
+                console.log('稳定化完成，保存所有节点位置');
+                const allNodeIds = nodes.getIds();
+                allNodeIds.forEach(nodeId => {
+                    const position = window.network.getPosition(nodeId);
+                    nodePositions[nodeId] = position;
+                });
+            });        
+            
+            // 添加事件监听
+            window.network.on('click', function(params) {
+                if (params.nodes.length > 0) {
+                    console.log('点击的节点ID:', params.nodes[0]);
+                    console.log('节点ID类型:', typeof params.nodes[0]);
+                    
+                    // 阻止事件冒泡
+                    params.event = params.event || {};
+                    if (params.event.preventDefault) {
+                        params.event.preventDefault();
+                    }
+                    if (params.event.stopPropagation) {
+                        params.event.stopPropagation();
+                    }
+                    
+                    // 显示节点详情
+                    showNodeDetails(params.nodes[0], params.event);
+                }
+            });
+        }
+
+        // 全局变量
+        let useRealData = false; // 默认使用模拟数据
+        
+        // 关系类型中英文映射
+        const relationTypeMap = {
+            'DEVELOPS_INTO': '继承发展',
+            'CONTAINS': '包含',
+            'GUIDES': '指导',
+            'RELATED_TO': '相关',
+            'WORKS_AT': '工作于',
+            'KNOWS': '认识',
+            'USES': '使用',
+            'PARENT_OF': '父节点',
+            'CHILD_OF': '子节点',
+            'PART_OF': '属于',
+            'HAS_EXAMPLE': '有例题',
+            'PREREQUISITE': '前置知识'
+        };
+        
+        // 属性名中英文映射
+        const propertyKeyMap = {
+            'name': '名称',
+            'type': '类型',
+            'description': '描述',
+            'key_concepts': '核心概念',
+            'chapter': '章节',
+            'difficulty': '难度',
+            'definition': '定义',
+            'category': '分类',
+            'related_theory': '相关理论',
+            'period': '时期',
+            'significance': '意义',
+            'display_name': '显示名称',
+            'title': '标题',
+            'age': '年龄',
+            'industry': '行业',
+            'location': '地点',
+            'level': '级别'
+        };
+        
+        // 获取属性名的中文显示
+        function getPropertyKeyDisplay(key) {
+            return propertyKeyMap[key] || key;
+        }
+        
+        // 显示节点编辑表单
+        function showEditForm(nodeId) {
+            // 获取节点当前信息
+            fetch(`/api/node/${nodeId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.data) {
+                        const node = data.data.node;
+                        const properties = node.properties;
+                        
+                        // 填充表单
+                        document.getElementById('editNodeId').value = node.id;
+                        document.getElementById('editNodeName').value = properties.name || '';
+                        document.getElementById('editNodeType').value = properties.type || '';
+                        document.getElementById('editNodeDescription').value = properties.description || '';
+                        document.getElementById('editNodeChapter').value = properties.chapter || '';
+                        document.getElementById('editNodeDifficulty').value = properties.difficulty || '基础';
+                        document.getElementById('editNodeKeyConcepts').value = properties.key_concepts || '';
+                        
+                        // 显示编辑表单，隐藏详情
+                        document.getElementById('nodeDetails').classList.add('hidden');
+                        document.getElementById('nodeEditForm').classList.remove('hidden');
+                    } else {
+                        alert('获取节点信息失败');
+                    }
+                })
+                .catch(error => {
+                    console.error('获取节点信息失败:', error);
+                    alert('获取节点信息失败');
+                });
+        }
+        
+        // 取消编辑
+        function cancelEdit() {
+            document.getElementById('nodeEditForm').classList.add('hidden');
+            document.getElementById('nodeDetails').classList.remove('hidden');
+        }
+        
+        // 更新节点
+        document.getElementById('editNodeForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const nodeId = document.getElementById('editNodeId').value;
+            const updateData = {
+                name: document.getElementById('editNodeName').value,
+                type: document.getElementById('editNodeType').value,
+                description: document.getElementById('editNodeDescription').value,
+                chapter: document.getElementById('editNodeChapter').value,
+                difficulty: document.getElementById('editNodeDifficulty').value,
+                key_concepts: document.getElementById('editNodeKeyConcepts').value
+            };
+            
+            // 过滤空值
+            Object.keys(updateData).forEach(key => {
+                if (!updateData[key]) {
+                    delete updateData[key];
+                }
+            });
+            
+            fetch(`/api/update_node/${nodeId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(updateData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('节点更新成功！');
+                    cancelEdit();
+                    // 重新加载图谱数据
+                    loadGraphData();
+                    // 重新显示节点详情
+                    showNodeDetails(nodeId, null);
+                } else {
+                    alert('节点更新失败: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('更新节点失败:', error);
+                alert('更新节点失败');
+            });
+        });
+        
+        // 删除节点
+        function deleteNode(nodeId, nodeName = null) {
+            // 如果没有传递节点ID，从编辑表单获取（兼容旧代码）
+            if (!nodeId) {
+                nodeId = document.getElementById('editNodeId').value;
+                nodeName = document.getElementById('editNodeName').value;
+            }
+            
+            if (!nodeId) {
+                alert('无法获取节点ID');
+                return;
+            }
+            
+            const displayName = nodeName || `节点${nodeId}`;
+            
+            if (confirm(`确定要删除"${displayName}"吗？此操作不可撤销！`)) {
+                fetch(`/api/delete_node/${nodeId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            alert('节点删除成功！');
+                            cancelEdit();
+                            // 重新加载图谱数据
+                            loadGraphData();
+                            // 清空节点详情
+                            document.getElementById('nodeDetails').innerHTML = `
+                                <div class="text-gray-500 text-center py-8">
+                                    <i class="fas fa-info-circle text-4xl mb-4"></i>
+                                    <p>请点击图谱中的节点查看详情</p>
+                                </div>
+                            `;
+                        } else {
+                            alert('节点删除失败: ' + data.message);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('删除节点失败:', error);
+                        alert('删除节点失败');
+                    });
+            }
+        }
+        
+        // 获取关系类型的中文显示
+        function getRelationTypeDisplay(relationType) {
+            return relationTypeMap[relationType] || relationType;
+        }
+        
+        // 切换数据源
+        function toggleDataSource() {
+            useRealData = !useRealData;
+            const btn = document.getElementById('useRealDataBtn');
+            const status = document.getElementById('dataSourceStatus');
+            
+            if (useRealData) {
+                btn.textContent = '使用模拟数据';
+                btn.className = 'px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600 transition-colors';
+                status.textContent = '当前: 真实数据';
+            } else {
+                btn.textContent = '使用真实数据';
+                btn.className = 'px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors';
+                status.textContent = '当前: 模拟数据';
+            }
+            
+            // 重新加载图谱数据
+            loadGraphData();
+        }
+
+        // 加载图谱数据
+        function loadGraphData() {
+            console.log('开始加载图谱数据...');
+            console.log('当前数据源模式:', useRealData ? '真实数据' : '模拟数据');
+            
+            const apiUrl = useRealData ? '/api/real_graph_data' : '/api/graph_data';
+            console.log('请求API地址:', apiUrl);
+            
+            fetch(apiUrl)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const graphData = data.data;
+                        
+                        // 现在真实数据和模拟数据格式统一了，都是 nodes 和 edges
+                        const nodesData = graphData.nodes;
+                        const edgesData = graphData.edges;
+                        
+                        // 创建节点数据集
+                        nodes = new vis.DataSet(nodesData.map(node => ({
+                            id: node.id, // 后端已经确保是数字
+                            label: node.properties?.display_name || node.properties?.name || node.properties?.title || node.label || `节点${node.id}`,
+                            title: node.properties?.display_name || node.properties?.name || node.properties?.title || node.label || `节点${node.id}`,
+                            group: node.labels?.[0] || node.group || 'default',
+                            ...node.properties
+                        })));
+                        
+                        // 创建边数据集
+                        edges = new vis.DataSet(edgesData.map(edge => ({
+                            from: edge.from, // 后端已经确保是数字
+                            to: edge.to,     // 后端已经确保是数字
+                            label: getRelationTypeDisplay(edge.label), // 显示中文关系类型
+                            title: getRelationTypeDisplay(edge.title || edge.label), // 悬停显示中文
+                            originalLabel: edge.label // 保留原始英文标签
+                        })));
+                        
+                        // 更新统计信息
+                        document.getElementById('nodeCount').textContent = nodesData.length;
+                        document.getElementById('edgeCount').textContent = edgesData.length;
+                        
+                        // 初始化图谱
+                        initGraph();
+                    }
+                })
+                .catch(error => {
+                    console.error('加载图谱数据失败:', error);
+                    console.error('错误详情:', error.message);
+                    console.error('API地址:', apiUrl);
+                    alert('加载图谱数据失败，请检查Neo4j连接');
+                });
+        }
+
+        // 搜索节点
+        function searchNodes() {
+            const keyword = document.getElementById('searchInput').value.trim();
+            if (!keyword) {
+                alert('请输入搜索关键词');
+                return;
+            }
+            
+            fetch(`/api/search?keyword=${encodeURIComponent(keyword)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        displaySearchResults(data.data);
+                    }
+                })
+                .catch(error => {
+                    console.error('搜索失败:', error);
+                    alert('搜索失败');
+                });
+        }
+
+        // 显示搜索结果
+        function displaySearchResults(results) {
+            const container = document.getElementById('searchResults');
+            
+            if (results.length === 0) {
+                container.innerHTML = `
+                    <div class="text-gray-500 text-center py-8">
+                        <i class="fas fa-search text-4xl mb-4"></i>
+                        <p>未找到相关节点</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            container.innerHTML = results.map(node => `
+                <div class="search-result p-4 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors duration-200" 
+                     onclick="event.preventDefault(); event.stopPropagation(); showNodeDetails(${node.id}); return false;">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h4 class="font-medium text-gray-900">${node.properties.name || '未知节点'}</h4>
+                            <p class="text-sm text-gray-600">${node.labels ? node.labels.join(', ') : ''}</p>
+                        </div>
+                        <i class="fas fa-chevron-right text-gray-400"></i>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 显示节点详情
+        function showNodeDetails(nodeId, event) {
+            console.log('showNodeDetails 接收到的 nodeId:', nodeId);
+            console.log('nodeId 类型:', typeof nodeId);
+            
+            // 阻止默认行为和事件冒泡
+            if (event && typeof event.preventDefault === 'function') {
+                event.preventDefault();
+            }
+            if (event && typeof event.stopPropagation === 'function') {
+                event.stopPropagation();
+            }
+            
+            // 确保nodeId是数字类型
+            if (isNaN(nodeId)) {
+                console.error('节点ID不是有效数字:', nodeId);
+                const container = document.getElementById('nodeDetails');
+                container.innerHTML = `
+                    <div class="alert alert-error">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <span>无效的节点ID: ${nodeId}</span>
+                    </div>
+                `;
+                return;
+            }
+            
+            nodeId = Number(nodeId);
+            console.log('转换后的 nodeId:', nodeId);
+            
+            // 显示加载状态 - 使用覆盖层避免布局变化
+            const container = document.getElementById('nodeDetails');
+            
+            // 移除旧的加载状态
+            const oldLoading = container.querySelector('.loading-container');
+            if (oldLoading) {
+                oldLoading.remove();
+            }
+            
+            // 添加新的加载状态覆盖层
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'loading-container';
+            loadingDiv.innerHTML = `
+                <div class="loading loading-spinner text-primary"></div>
+                <p class="mt-2 text-gray-600">正在加载节点信息...</p>
+            `;
+            container.appendChild(loadingDiv);
+            
+            // 添加一个小的延迟，让加载状态能够显示出来
+            setTimeout(() => {
+                fetch(`/api/node/${nodeId}`)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('获取节点信息失败');
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (data.success && data.data) {
+                            displayNodeDetails(data.data);
+                            
+                            // 如果有网络图，高亮显示选中的节点
+                            if (window.network) {
+                                // 先取消之前的高亮
+                                window.network.setSelection({ nodes: [], edges: [] });
+                                // 高亮当前节点
+                                window.network.setSelection({ nodes: [nodeId] });
+                                // 不自动聚焦，避免页面闪烁
+                            }
+                        } else {
+                            throw new Error(data.message || '未找到节点信息');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('获取节点详情失败:', error);
+                        container.innerHTML = `
+                            <div class="alert alert-error">
+                                <i class="fas fa-exclamation-circle"></i>
+                                <span>加载节点详情失败: ${error.message || '未知错误'}</span>
+                            </div>
+                        `;
+                    });
+            }, 50); // 50ms的延迟，确保UI更新
+        }
+
+        // 显示节点详情
+        function displayNodeDetails(data) {
+            const container = document.getElementById('nodeDetails');
+            
+            const node = data.node;
+            const relationships = data.relationships || [];
+            
+            if (!node) {
+                container.innerHTML = `
+                    <div class="alert alert-error">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <span>节点信息不存在</span>
+                    </div>
+                `;
+                return;
+            }
+            
+            try {
+                const html = `
+                    <div class="node-info p-4 rounded-lg mb-4 bg-base-100 border border-base-300">
+                        <div class="flex justify-between items-start mb-3">
+                            <h4 class="font-semibold text-lg">${node.properties.name || node.properties.title || '未知节点'}</h4>
+                            <div class="flex space-x-2">
+                                <button onclick="showEditForm(${node.id})" class="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors">
+                                    <i class="fas fa-edit mr-1"></i>编辑
+                                </button>
+                                <button onclick="deleteNode(${node.id}, '${node.properties.name || node.properties.title || `未知节点`}')" class="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors">
+                                    <i class="fas fa-trash mr-1"></i>删除
+                                </button>
+                            </div>
+                        </div>
+                        <p class="text-sm text-gray-600 mb-2">类型: ${node.labels ? node.labels.join(', ') : '未知'}</p>
+                        ${Object.entries(node.properties || {}).map(([key, value]) => 
+                            value ? `<p class="text-sm"><span class="font-medium">${getPropertyKeyDisplay(key)}:</span> ${value}</p>` : ''
+                        ).join('')}
+                    </div>
+                    ${relationships.length > 0 ? `
+                        <div class="space-y-3">
+                            <h5 class="font-medium text-gray-800">相关关系:</h5>
+                            ${relationships.map(rel => {
+                                const targetNode = rel.start_node.id === node.id ? rel.end_node : rel.start_node;
+                                const direction = rel.start_node.id === node.id ? '→' : '←';
+                                const targetName = targetNode.properties.name || targetNode.properties.title || '未知';
+                                const relationType = rel.relationship.type || rel.type; // 兼容不同数据格式
+                                return `
+                                    <div class="p-3 bg-base-100 rounded-lg border border-base-200 hover:bg-base-200 transition-colors">
+                                        <div class="flex items-center justify-between mb-2">
+                                            <span class="font-medium">${getRelationTypeDisplay(relationType)}</span>
+                                        </div>
+                                        <p class="text-sm text-gray-600">
+                                            ${node.properties.name || '未知'} ${direction} ${targetName}
+                                        </p>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    ` : `
+                        <div class="text-gray-500 text-center py-4">
+                            <i class="fas fa-info-circle text-2xl mb-2"></i>
+                            <p class="text-sm">该节点暂无关系信息</p>
+                        </div>
+                    `}
+                `;
+                
+                // 移除加载状态
+                const loadingDiv = container.querySelector('.loading-container');
+                if (loadingDiv) {
+                    loadingDiv.remove();
+                }
+                
+                container.innerHTML = html;
+            } catch (error) {
+                console.error('渲染节点详情时出错:', error);
+                container.innerHTML = `
+                    <div class="alert alert-error">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <span>渲染节点详情时出错: ${error.message || '未知错误'}</span>
+                    </div>
+                `;
+            }
+        }
+
+        // 问答功能
+        async function askQuestion() {
+            const question = document.getElementById('qaInput').value.trim();
+            if (!question) {
+                alert('请输入问题');
+                return;
+            }
+            
+            // 显示加载状态
+            const resultsContainer = document.getElementById('qaResults');
+            const placeholderContainer = document.getElementById('qaPlaceholder');
+            const answerDiv = document.getElementById('qaAnswer');
+            
+            // 隐藏占位符，显示结果容器
+            placeholderContainer.classList.add('hidden');
+            resultsContainer.classList.remove('hidden');
+            
+            answerDiv.innerHTML = `
+                <div class="text-center py-4">
+                    <div class="loading loading-spinner text-primary"></div>
+                    <p class="mt-2 text-gray-600">正在思考中，请稍候...</p>
+                </div>
+            `;
+            
+            try {
+                const response = await fetch(`/api/qa?question=${encodeURIComponent(question)}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayQAResult(data.answer, data.query);
+                } else {
+                    answerDiv.innerHTML = `
+                        <div class="alert alert-error">
+                            <i class="fas fa-exclamation-circle"></i>
+                            <span>${data.message || '处理问题时出错'}</span>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('问答失败:', error);
+                answerDiv.innerHTML = `
+                    <div class="alert alert-error">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <span>提问失败: ${error.message || '未知错误'}</span>
+                    </div>
+                `;
+            }
+        }
+
+        // 显示问答结果
+        function displayQAResult(answer, query) {
+            const container = document.getElementById('qaResults');
+            const answerDiv = document.getElementById('qaAnswer');
+            
+            answerDiv.innerHTML = `
+                <div class="space-y-4">
+                    <div class="bg-green-50 p-4 rounded-lg">
+                        <h3 class="font-semibold text-green-800 mb-2">
+                            <i class="fas fa-robot mr-2"></i>AI 回答：
+                        </h3>
+                        <p class="text-gray-800">${answer}</p>
+                    </div>
+                    ${query ? `
+                    <div class="bg-gray-50 p-4 rounded-lg">
+                        <h4 class="font-medium text-gray-700 mb-2">
+                            <i class="fas fa-code mr-2"></i>生成的查询：
+                        </h4>
+                        <pre class="mt-2 p-2 bg-gray-100 rounded overflow-x-auto text-sm">${query}</pre>
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+            container.classList.remove('hidden');
+        }
+
+        // 刷新图谱
+        function refreshGraph() {
+            loadGraphData();
+        }
+
+        // 适应屏幕
+        function fitGraph() {
+            if (window.network) {
+                window.network.fit({
+                    animation: {
+                        duration: 1000,
+                        easingFunction: 'easeInOutQuad'
+                    }
+                });
+            } else {
+                console.log('图谱网络未初始化');
+            }
+        }
+
+        // 重置视图
+        function resetGraph() {
+            if (network) {
+                network.fit();
+                network.redraw();
+            }
+        }
+
+        // 键盘事件处理
+        function handleSearchKeypress(event) {
+            if (event.key === 'Enter') {
+                searchNodes();
+            }
+        }
+
+        function handleQAKeypress(event) {
+            if (event.key === 'Enter') {
+                askQuestion();
+            }
+        }
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('页面加载完成，开始检查vis.js状态...');
+            console.log('vis对象状态:', typeof vis);
+            
+            if (checkVisLoaded()) {
+                console.log('vis.js检查通过，开始加载图谱数据...');
+                loadGraphData();
+            } else {
+                console.log('vis.js检查失败，但仍尝试加载数据...');
+                // 即使vis.js没有加载，也尝试加载数据
+                loadGraphData();
+            }
+        });
+    </script>
+</body>
+</html>
