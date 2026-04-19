@@ -2,6 +2,11 @@
 
 一个基于Neo4j的知识图谱可视化平台，支持政治理论知识的图谱展示、搜索和智能问答。
 
+## 界面展示
+
+### 系统主界面
+![系统界面](image.png)
+
 ## 功能特性
 
 ### 📊 知识图谱可视化
@@ -9,6 +14,8 @@
 - 支持节点拖拽、缩放、平移
 - 实时显示节点和关系统计信息
 - 自适应屏幕布局
+
+
 
 ### 🔍 智能搜索
 - 节点关键词搜索
@@ -24,6 +31,7 @@
 - 查看节点详细信息
 - 编辑节点属性
 - 删除节点操作
+
 
 ## 技术栈
 
@@ -58,6 +66,12 @@ export DEEPSEEK_API_KEY="your-api-key"
 export NEO4J_URI="bolt://localhost:7687"
 export NEO4J_USER="neo4j"
 export NEO4J_PASSWORD="your-password"
+```
+
+也可以自行创建本地环境文件，并在启动前加载，例如：
+```bash
+cp .env.example .env.local
+source .env.local
 ```
 
 4. 初始化数据库
